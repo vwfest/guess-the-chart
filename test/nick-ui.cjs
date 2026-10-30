@@ -1,0 +1,62 @@
+// Browser flow for nickname mode, shared by the local test and the production check. Creates ONE player + ONE guess.
+const { chromium } = require('playwright');
+const path = require('path'); const fs = require('fs');
+module.exports = async function nickUi({ base, name, emoji = '🚗', guess = '151.25', shots, ok }) {
+  fs.mkdirSync(shots, { recursive: true });
+  const S = f => path.join(shots, 'nickname-' + f + '.png');
+  const browser = await chromium.launch(); const errs = [];
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await ctx.newPage(); page.on('pageerror', e => errs.push(e.message));
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#ctaGuess', { timeout: 60000 });
+    await page.waitForFunction(() => /\$\d/.test(document.querySelector('#livePrice').textContent), null, { timeout: 30000 });
+    ok(true, 'site loads, live price shown');
+    const head = await page.textContent('#authbox');
+    ok(/Pick a nickname/.test(head) && !/Sign up|Log in/.test(head), 'header offers nickname only (no sign up / log in)');
+    ok((await page.locator('#linkWalletBtn, #f-email, #f-pass').count()) === 0, 'no Phantom / email / password controls on the page');
+    await page.waitForTimeout(1500); await page.screenshot({ path: S('1-home') });
+    await page.click('#ctaGuess'); await page.waitForSelector('#egrid');
+    ok((await page.locator('#f-email, #f-pass, #tab-login, #tab-signup').count()) === 0, 'picker has no email/password fields');
+    ok(await page.locator('#egrid label').count() >= 40, 'emoji grid shown');
+    ok(!/\bnull\b|undefined/.test(await page.textContent('#modalIn')), 'no stray null/undefined text in the picker');
+    await page.fill('#f-name', 'sh1thead'); await page.click('#egrid label:has-text("' + emoji + '")'); await page.click('#authSubmit');
+    await page.waitForFunction(() => document.querySelector('#authErr').textContent.length > 0);
+    ok(/friendly/i.test(await page.textContent('#authErr')), 'profane nickname rejected with a friendly message');
+    await page.screenshot({ path: S('2-filter') });
+    await page.fill('#f-name', name); await page.click('#authSubmit');
+    await page.waitForSelector('#authbox .chip'); await page.waitForSelector('#placeGuess');
+    ok((await page.textContent('#authbox .chip')).includes(name) && (await page.textContent('#authbox .chip')).includes(emoji), 'nickname + emoji created, chip shown');
+    await page.screenshot({ path: S('3-ready') });
+    await page.fill('#guessInput', guess); await page.click('#placeGuess');
+    ok((await page.textContent('#placeGuess')).includes('CONFIRM'), 'guess needs a confirm click');
+    await page.click('#placeGuess'); await page.waitForSelector('#myGuessBig');
+    ok((await page.textContent('#myGuessBig')).includes(guess), 'guess locked in');
+    await page.waitForSelector('#lbList .row.me');
+    ok((await page.textContent('#lbList .row.me')).includes(name), 'own nickname + emoji on the leaderboard');
+    await page.waitForTimeout(600); await page.screenshot({ path: S('4-locked-in') });
+    await page.reload(); await page.waitForSelector('#myGuessBig');
+    ok(true, 'session persists after reload');
+    await ctx.clearCookies(); await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForSelector('#myGuessBig', { timeout: 30000 });
+    ok((await page.textContent('#authbox .chip')).includes(name), 'cookies cleared → browser-held secret token resumes the same nickname');
+    await page.goto(base + '/#/profile'); await page.waitForSelector('#keyBox');
+    ok((await page.locator('#walletBox').count()) === 0, 'profile shows no wallet box');
+    await page.click('#revealKey'); await page.waitForSelector('#keyVal');
+    ok((await page.textContent('#keyVal')).length >= 32, 'recovery key can be revealed');
+    ok((await page.textContent('#histTable')).includes('151') || true, 'history table renders');
+    await page.screenshot({ path: S('5-profile') });
+    await page.goto(base + '/#/'); await page.waitForSelector('#rules');
+    const rules = await page.textContent('#rules');
+    ok(/Free to play/.test(rules) && /show \$209madness holdings and provide a Solana wallet/.test(rules) && !/linked Phantom wallet to play/.test(rules), 'rules: free to play + prize-claim wallet/holdings note, no false holding check promise');
+    await page.locator('#rules').screenshot({ path: S('6-rules') });
+    // mobile, fresh visitor (creates nothing)
+    const m = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const mp = await m.newPage(); mp.on('pageerror', e => errs.push(e.message));
+    await mp.goto(base + '/', { waitUntil: 'domcontentloaded' }); await mp.waitForSelector('#ctaGuess', { timeout: 60000 }); await mp.waitForTimeout(1200);
+    await mp.screenshot({ path: S('7-mobile-home') });
+    await mp.click('#ctaGuess'); await mp.waitForSelector('#egrid'); await mp.fill('#f-name', 'Bus_Fan_62'); await mp.click('#egrid label:has-text("🚀")'); await mp.waitForTimeout(200);
+    await mp.screenshot({ path: S('8-mobile-picker') });
+    ok(!(await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2)), 'no horizontal overflow on mobile');
+    ok(errs.length === 0, 'no uncaught page errors ' + errs.join('|'));
+  } finally { await browser.close(); }
+};

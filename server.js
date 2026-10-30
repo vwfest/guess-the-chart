@@ -11,6 +11,7 @@ const db = require('./lib/db');
 const price = require('./lib/price');
 const sol = require('./lib/solana');
 const { weekFor, TZ } = require('./lib/time');
+const { NAME_RE, checkName } = require('./lib/names');
 
 const PROD = process.env.NODE_ENV === 'production';
 const TEST = process.env.GTC_TEST === '1';
@@ -19,10 +20,17 @@ const CFG = {
   lockDay: int(process.env.LOCK_DAY, 1), lockHour: int(process.env.LOCK_HOUR, 21), lockMin: int(process.env.LOCK_MIN, 0),         // Mon 9:00 PM PT
   settleDay: int(process.env.SETTLE_DAY, 5), settleHour: int(process.env.SETTLE_HOUR, 10), settleMin: int(process.env.SETTLE_MIN, 0), // Fri 10:00 AM PT (next round opens right after)
   mint: process.env.TOKEN_MINT || '5671ysSG8RL8dU5pMy9KVG95GrGGFyfaLbvaVWF6pump',
-  requireHolding: process.env.REQUIRE_HOLDING !== 'false',
+  // Sign-in methods. Nickname + emoji is the only one on by default; wallet and email code stays in place behind these flags.
+  authNickname: process.env.AUTH_NICKNAME !== 'false',
+  authWallet: process.env.AUTH_WALLET === 'true',
+  authEmail: process.env.AUTH_EMAIL === 'true',
+  nickPerHour: int(process.env.NICK_PER_HOUR, 6), nickPerDay: int(process.env.NICK_PER_DAY, 20), // new nicknames per IP
+  guessPerIp: int(process.env.GUESS_PER_IP, 10),                                                    // guesses per IP per round
   minHold: int(process.env.MIN_HOLD, 1),
   prize: process.env.PRIZE_TEXT || '$25 SOL',
 };
+// The $209madness holding check needs a linked wallet, so it only applies while wallet login is on (and REQUIRE_HOLDING isn't 'false').
+CFG.requireHolding = CFG.authWallet && process.env.REQUIRE_HOLDING !== 'false';
 const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 const EMOJIS = ['🔥','💎','🚀','👑','🎯','🤑','⚡','🧊','🌊','🎰','🃏','🦁','🐺','🦅','🐉','🦈','🐻','🦍','🐸','🦄','🐯','🦊','🐙','🦂','🌵','🌙','☀️','⭐','💀','👽','🤖','😈','🥷','🧠','💰','🏆','🎲','♠️','♦️','🍀','🚗','🏎️','🌴','🍺','🎸','🎧','🧨','🌈'];
 const EMOJI_SET = new Set(EMOJIS);
@@ -83,6 +91,21 @@ app.post('/api/admin/settle', adminLimiter, async (req, res) => {
   res.json(out);
 });
 
+// Remove a (test) player and their guesses from rounds that are not settled yet. Refuses if they have any settled-round guess.
+app.post('/api/admin/remove-player', adminLimiter, async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(404).json({ error: 'Not found' });
+  if (!safeEq(req.get('x-admin-secret') || '', ADMIN_SECRET)) return res.status(401).json({ error: 'Unauthorized' });
+  const name = String((req.body || {}).name || '');
+  const u = (await db.query(`SELECT id FROM ${db.S}.users WHERE lower(name)=lower($1)`, [name])).rows[0];
+  if (!u) return res.status(404).json({ error: 'No such player' });
+  const settled = (await db.query(`SELECT 1 FROM ${db.S}.guesses g JOIN ${db.S}.rounds r ON r.id=g.round_id WHERE g.user_id=$1 AND r.status='settled' LIMIT 1`, [u.id])).rows[0];
+  if (settled) return res.status(409).json({ error: 'Player has guesses in a settled round; not removed.' });
+  await db.query(`DELETE FROM ${db.S}.guesses WHERE user_id=$1`, [u.id]);
+  await db.query(`DELETE FROM ${db.S}.users WHERE id=$1`, [u.id]);
+  broadcast('guess', {});
+  res.json({ removed: name });
+});
+
 // ---------- CSRF (double-submit, httpOnly cookie + header) + Origin check ----------
 app.get('/api/csrf', (req, res) => {
   let t = req.cookies.csrf;
@@ -114,7 +137,9 @@ async function startSession(res, userId) {
   await db.query(`INSERT INTO ${db.S}.sessions (id,user_id,expires_at) VALUES ($1,$2,now()+interval '30 days')`, [hash(sid), userId]);
   res.cookie('sid', sid, cookieOpts({ maxAge: 30 * 864e5 }));
 }
-const needAuth = (req, res, next) => req.user ? next() : res.status(401).json({ error: 'Log in first.' });
+const needAuth = (req, res, next) => req.user ? next() : res.status(401).json({ error: 'Pick a nickname first.', code: 'auth' });
+const need = key => (req, res, next) => CFG[key] ? next() : res.status(403).json({ error: key === 'authEmail' ? 'Email accounts are turned off for now. Just pick a nickname!' : key === 'authWallet' ? 'Wallet login is turned off for now.' : 'Nickname play is turned off.', code: 'auth_disabled' });
+const ipHash = req => hash('gtc-ip|' + (ADMIN_SECRET || '') + '|' + (req.ip || ''));
 
 // ---------- Rounds ----------
 async function ensureRound() {
@@ -204,7 +229,7 @@ const meDto = async u => {
     FROM ${db.S}.guesses g JOIN ${db.S}.rounds r ON r.id=g.round_id WHERE g.user_id=$1 ORDER BY g.round_id DESC LIMIT 200`, [u.id])).rows;
   const settled = hist.filter(h => h.status === 'settled' && h.rank);
   return {
-    id: +u.id, name: u.name, emoji: u.emoji, wallet: u.wallet || null,
+    id: +u.id, name: u.name, emoji: u.emoji, kind: u.kind || 'email', wallet: u.wallet || null,
     holder: u.wallet ? (u.wallet_balance !== null && +u.wallet_balance >= CFG.minHold) : false,
     walletBalance: u.wallet_balance === null ? null : +u.wallet_balance,
     totalGuesses: hist.length,
@@ -237,8 +262,8 @@ app.get('/api/state', async (req, res) => {
   res.set('Cache-Control', 'no-store').json({
     now: now(), tz: TZ, round: dto, count, winner, lastRound, myGuess,
     price: { usd: price.state.usd, at: price.state.at, history: price.state.history.slice(-90) },
-    me: req.user ? { id: +req.user.id, name: req.user.name, emoji: req.user.emoji, wallet: req.user.wallet || null, holder: !!req.user.wallet && req.user.wallet_balance !== null && +req.user.wallet_balance >= CFG.minHold } : null,
-    config: { requireHolding: CFG.requireHolding, minHold: CFG.minHold, mint: CFG.mint, prize: CFG.prize, emojis: EMOJIS },
+    me: req.user ? { id: +req.user.id, name: req.user.name, emoji: req.user.emoji, kind: req.user.kind || 'email', wallet: req.user.wallet || null, holder: !!req.user.wallet && req.user.wallet_balance !== null && +req.user.wallet_balance >= CFG.minHold } : null,
+    config: { authNickname: CFG.authNickname, authWallet: CFG.authWallet, authEmail: CFG.authEmail, requireHolding: CFG.requireHolding, minHold: CFG.minHold, mint: CFG.mint, prize: CFG.prize, emojis: EMOJIS },
   });
 });
 app.get('/api/leaderboard', async (req, res) => {
@@ -257,14 +282,13 @@ app.get('/api/rounds', async (req, res) => {
 });
 
 // ---------- Accounts ----------
-const NAME_RE = /^[A-Za-z0-9_.-]{3,16}$/;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
-app.post('/api/signup', lim(3600e3, int(process.env.SIGNUP_LIMIT, 8), 'Too many sign-ups from this network. Try later.'), async (req, res) => {
+app.post('/api/signup', need('authEmail'), lim(3600e3, int(process.env.SIGNUP_LIMIT, 8), 'Too many sign-ups from this network. Try later.'), async (req, res) => {
   const { email, password, name, emoji } = req.body || {};
   if (typeof email !== 'string' || email.length > 254 || !EMAIL_RE.test(email.trim())) return res.status(400).json({ error: 'Enter a valid email.' });
   if (typeof password !== 'string' || password.length < 10 || Buffer.byteLength(password) > 72) return res.status(400).json({ error: 'Password must be 10–72 characters.' });
-  if (typeof name !== 'string' || !NAME_RE.test(name)) return res.status(400).json({ error: 'Display name: 3–16 letters, numbers, _ . -' });
+  { const ne = checkName(name); if (ne) return res.status(400).json({ error: ne }); }
   if (typeof emoji !== 'string' || !EMOJI_SET.has(emoji)) return res.status(400).json({ error: 'Pick an emoji from the grid.' });
   const em = email.trim().toLowerCase();
   if ((await db.query(`SELECT 1 FROM ${db.S}.users WHERE lower(name)=lower($1)`, [name])).rows[0]) return res.status(409).json({ error: 'That display name is taken.', field: 'name' });
@@ -278,14 +302,55 @@ app.post('/api/signup', lim(3600e3, int(process.env.SIGNUP_LIMIT, 8), 'Too many 
 });
 const loginLimiter = rateLimit({ windowMs: 15 * 60e3, limit: 12, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many login attempts. Try again in a few minutes.' },
   keyGenerator: req => (req.ip || '') + '|' + String((req.body && req.body.email) || '').toLowerCase().slice(0, 100), validate: { keyGeneratorIpFallback: false } });
-app.post('/api/login', lim(15 * 60e3, 60, 'Too many login attempts.'), loginLimiter, async (req, res) => {
+app.post('/api/login', need('authEmail'), lim(15 * 60e3, 60, 'Too many login attempts.'), loginLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (typeof email !== 'string' || typeof password !== 'string' || email.length > 254 || password.length > 200) return res.status(400).json({ error: 'Invalid email or password.' });
   const u = (await db.query(`SELECT * FROM ${db.S}.users WHERE lower(email)=$1`, [email.trim().toLowerCase()])).rows[0];
-  const ok = await bcrypt.compare(password, u ? u.pass_hash : DUMMY_HASH);
-  if (!u || !ok) return res.status(401).json({ error: 'Invalid email or password.' });
+  const ok = await bcrypt.compare(password, u && u.pass_hash ? u.pass_hash : DUMMY_HASH);
+  if (!u || !u.pass_hash || !ok) return res.status(401).json({ error: 'Invalid email or password.' });
   await startSession(res, u.id);
   res.json({ me: await meDto(u) });
+});
+
+// ---------- Nickname players (default): pick a unique nickname + emoji, no sign-up ----------
+// The server issues a random secret token that the browser keeps (localStorage) and can send back to resume the same
+// player on a fresh session. Only its SHA-256 is stored, so the nickname can't be taken over without the token.
+const TOKEN_RE = /^[\w-]{32,64}$/;
+const newToken = () => rand(32);
+async function nickCreateAllowed(req) {
+  const ip = ipHash(req);
+  const c = (await db.query(`SELECT count(*) FILTER (WHERE created_at > now() - interval '1 hour') h, count(*) d FROM ${db.S}.users WHERE created_ip=$1 AND created_at > now() - interval '24 hours'`, [ip])).rows[0];
+  return +c.h < CFG.nickPerHour && +c.d < CFG.nickPerDay ? ip : null;
+}
+app.post('/api/nick/join', need('authNickname'), lim(60e3, 15, 'Slow down a little.'), async (req, res) => {
+  const { name, emoji } = req.body || {};
+  const ne = checkName(name); if (ne) return res.status(400).json({ error: ne, field: 'name' });
+  if (typeof emoji !== 'string' || !EMOJI_SET.has(emoji)) return res.status(400).json({ error: 'Pick an emoji from the grid.', field: 'emoji' });
+  if ((await db.query(`SELECT 1 FROM ${db.S}.users WHERE lower(name)=lower($1)`, [name])).rows[0]) return res.status(409).json({ error: 'That nickname is taken. Try another.', field: 'name' });
+  const ip = await nickCreateAllowed(req);
+  if (!ip) return res.status(429).json({ error: 'Too many new nicknames from this network. Try again later.', code: 'ip_limit' });
+  const token = newToken();
+  let u;
+  try { u = (await db.query(`INSERT INTO ${db.S}.users (name,emoji,kind,secret_hash,created_ip) VALUES ($1,$2,'nick',$3,$4) RETURNING *`, [name, emoji, hash(token), ip])).rows[0]; }
+  catch { return res.status(409).json({ error: 'That nickname is taken. Try another.', field: 'name' }); }
+  await startSession(res, u.id);
+  res.json({ me: await meDto(u), token });
+});
+// Resume with the browser-held token (new device/cookie loss). Brute force is impractical (256-bit) but we still rate-limit.
+app.post('/api/nick/resume', need('authNickname'), lim(15 * 60e3, 40, 'Too many attempts.'), async (req, res) => {
+  const { token } = req.body || {};
+  if (typeof token !== 'string' || !TOKEN_RE.test(token)) return res.status(400).json({ error: 'That recovery key is not valid.' });
+  const u = (await db.query(`SELECT * FROM ${db.S}.users WHERE secret_hash=$1`, [hash(token)])).rows[0];
+  if (!u) return res.status(404).json({ error: 'That recovery key was not found.' });
+  await startSession(res, u.id);
+  res.json({ me: await meDto(u) });
+});
+// Issue a (new) recovery key for the signed-in player — also lets pre-existing email/wallet profiles keep their identity.
+// Rotating replaces the previous key.
+app.post('/api/nick/key', needAuth, userLim(60e3, 5), async (req, res) => {
+  const token = newToken();
+  await db.query(`UPDATE ${db.S}.users SET secret_hash=$2 WHERE id=$1`, [req.user.id, hash(token)]);
+  res.json({ token });
 });
 app.post('/api/logout', async (req, res) => {
   const sid = req.cookies.sid;
@@ -297,7 +362,7 @@ app.get('/api/me', needAuth, async (req, res) => res.set('Cache-Control', 'no-st
 
 // ---------- Wallet (Phantom): sign a message to prove ownership, then check $209madness balance ----------
 const walletMsg = (u, nonce) => `GUESS THE CHART wallet link\nAccount: ${u.name}\nNonce: ${nonce}`;
-app.post('/api/wallet/nonce', needAuth, userLim(60e3, 10), async (req, res) => {
+app.post('/api/wallet/nonce', need('authWallet'), needAuth, userLim(60e3, 10), async (req, res) => {
   const nonce = rand(16);
   await db.query(`INSERT INTO ${db.S}.wallet_nonces (user_id,nonce,expires_at) VALUES ($1,$2,now()+interval '10 minutes') ON CONFLICT (user_id) DO UPDATE SET nonce=$2, expires_at=now()+interval '10 minutes'`, [req.user.id, nonce]);
   res.json({ message: walletMsg(req.user, nonce) });
@@ -305,7 +370,7 @@ app.post('/api/wallet/nonce', needAuth, userLim(60e3, 10), async (req, res) => {
 async function checkBalance(wallet) {
   try { return { bal: await sol.tokenBalance(wallet, CFG.mint) }; } catch (e) { console.warn('rpc fail', e.message); return { err: true }; }
 }
-app.post('/api/wallet/link', needAuth, userLim(60e3, 10), async (req, res) => {
+app.post('/api/wallet/link', need('authWallet'), needAuth, userLim(60e3, 10), async (req, res) => {
   const { publicKey, signature } = req.body || {};
   if (typeof publicKey !== 'string' || typeof signature !== 'string' || !sol.isPubkey(publicKey) || signature.length > 200) return res.status(400).json({ error: 'Bad wallet data.' });
   const n = (await db.query(`SELECT nonce FROM ${db.S}.wallet_nonces WHERE user_id=$1 AND expires_at>now()`, [req.user.id])).rows[0];
@@ -320,7 +385,7 @@ app.post('/api/wallet/link', needAuth, userLim(60e3, 10), async (req, res) => {
   const u = (await db.query(`SELECT * FROM ${db.S}.users WHERE id=$1`, [req.user.id])).rows[0];
   res.json({ me: await meDto(u), rpcError: !!b.err });
 });
-app.post('/api/wallet/check', needAuth, userLim(60e3, 10), async (req, res) => {
+app.post('/api/wallet/check', need('authWallet'), needAuth, userLim(60e3, 10), async (req, res) => {
   if (!req.user.wallet) return res.status(400).json({ error: 'No wallet linked.' });
   const b = await checkBalance(req.user.wallet);
   if (b.err) return res.status(503).json({ error: 'Could not reach Solana right now. Try again.' });
@@ -330,7 +395,7 @@ app.post('/api/wallet/check', needAuth, userLim(60e3, 10), async (req, res) => {
 });
 
 // ---------- Guess ----------
-app.post('/api/guess', needAuth, userLim(60e3, 20), async (req, res) => {
+app.post('/api/guess', lim(60e3, 30, 'Too many requests, slow down.'), needAuth, userLim(60e3, 20), async (req, res) => {
   const round = await ensureRound();
   if (phaseOf(round) !== 'open') return res.status(409).json({ error: 'Guessing is locked for this round.', code: 'locked' });
   const raw = req.body && req.body.price;
@@ -338,6 +403,9 @@ app.post('/api/guess', needAuth, userLim(60e3, 20), async (req, res) => {
   if (!/^\d{1,5}(\.\d{1,2})?$/.test(p) || !(+p >= 1 && +p <= 10000)) return res.status(400).json({ error: 'Enter a SOL price between $1 and $10,000 (up to 2 decimals).' });
   const dup = (await db.query(`SELECT 1 FROM ${db.S}.guesses WHERE round_id=$1 AND user_id=$2`, [round.id, req.user.id])).rows[0];
   if (dup) return res.status(409).json({ error: 'You already placed your guess this week. No changes.', code: 'dup' });
+  const gip = ipHash(req);
+  if (CFG.guessPerIp > 0 && +(await db.query(`SELECT count(*) c FROM ${db.S}.guesses WHERE round_id=$1 AND ip_hash=$2`, [round.id, gip])).rows[0].c >= CFG.guessPerIp)
+    return res.status(429).json({ error: 'Too many guesses from this network this week. Try from another connection.', code: 'ip_limit' });
   let holding = null;
   if (CFG.requireHolding) {
     if (!req.user.wallet) return res.status(403).json({ error: 'Link your Phantom wallet that holds $209madness to play.', code: 'wallet_required' });
@@ -348,7 +416,7 @@ app.post('/api/guess', needAuth, userLim(60e3, 20), async (req, res) => {
     if (b.bal < CFG.minHold) return res.status(403).json({ error: 'You must hold $209madness in your linked wallet to guess.', code: 'not_holder' });
   }
   if (phaseOf(round) !== 'open') return res.status(409).json({ error: 'Guessing is locked for this round.', code: 'locked' });
-  try { await db.query(`INSERT INTO ${db.S}.guesses (round_id,user_id,price,holding,created_at) VALUES ($1,$2,$3,$4,$5)`, [round.id, req.user.id, p, holding, new Date(now())]); }
+  try { await db.query(`INSERT INTO ${db.S}.guesses (round_id,user_id,price,holding,created_at,ip_hash) VALUES ($1,$2,$3,$4,$5,$6)`, [round.id, req.user.id, p, holding, new Date(now()), gip]); }
   catch { return res.status(409).json({ error: 'You already placed your guess this week. No changes.', code: 'dup' }); }
   broadcast('guess', { roundId: +round.id });
   res.json({ ok: true, guess: +p, me: await meDto(req.user) });

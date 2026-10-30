@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GUESS THE CHART — Closest SOL price wins $25 every week</title>
-<meta name="description" content="Closest price to SOL wins $25. Every week. A $209madness holders game.">
+<meta name="description" content="Closest price to SOL wins $25. Every week. Free to play, just pick a nickname.">
 <meta name="theme-color" content="#050505">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🎰%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/style.css">
@@ -77,11 +77,12 @@
   <div class="card rules" id="rules">
     <h2>📜 RULES</h2>
     <ul>
-      <li>You must hold <b>$209madness</b> in a linked Phantom wallet.</li>
+      <li id="ruleHold">Free to play — just a nickname and an emoji.</li>
       <li><b>One guess per week.</b> Once it's placed it can't be changed.</li>
       <li>Guesses lock at <b id="ruleLock">the lock time</b>. The final SOL/USD price is taken at <b id="ruleSettle">the settle time</b>.</li>
       <li><b>Closest price to SOL wins $25 SOL.</b> Ties go to the earlier guess.</li>
-      <li>Your emoji marker is permanent. Pick one you love.</li>
+      <li>Your nickname is unique and your emoji marker is permanent. Pick ones you love.</li>
+      <li id="ruleClaim"><b>Claiming the prize:</b> the winner must show $209madness holdings and provide a Solana wallet address.</li>
     </ul>
     <div class="tiny" id="mintLine"></div>
   </div>

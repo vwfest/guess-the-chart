@@ -1,4 +1,4 @@
-// End-to-end test: signup, emoji, wallet link (mock Phantom + mock Solana RPC), guess, live updates, lock, settle, re-rank, archive, profile, security.
+// LEGACY-MODE end-to-end test (AUTH_EMAIL=true AUTH_WALLET=true AUTH_NICKNAME=false: the flagged-off code paths still work). Signup, emoji, wallet link (mock Phantom + mock Solana RPC), guess, live updates, lock, settle, re-rank, archive, profile, security.
 const { chromium, request } = require('playwright');
 const { spawn } = require('child_process');
 const http = require('http'); const crypto = require('crypto'); const fs = require('fs'); const os = require('os'); const path = require('path');
@@ -42,7 +42,7 @@ const post = (ctx, u, b) => api(ctx, 'POST', u, b);
 (async () => {
   rpc.listen(RPC_PORT);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gtc-'));
-  const srv = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, PORT, GTC_TEST: '1', PGLITE_DIR: dir, SOLANA_RPC: `http://127.0.0.1:${RPC_PORT}`, PRICE_FIXED: '150', ADMIN_SECRET: 'test-admin-secret-0123456789', SIGNUP_LIMIT: '200', DATABASE_URL: '' } });
+  const srv = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, PORT, GTC_TEST: '1', PGLITE_DIR: dir, SOLANA_RPC: `http://127.0.0.1:${RPC_PORT}`, PRICE_FIXED: '150', ADMIN_SECRET: 'test-admin-secret-0123456789', SIGNUP_LIMIT: '200', DATABASE_URL: '', AUTH_EMAIL: 'true', AUTH_WALLET: 'true', AUTH_NICKNAME: 'false', GUESS_PER_IP: '0' } });
   let slog = ''; srv.stdout.on('data', d => slog += d); srv.stderr.on('data', d => slog += d);
   for (let i = 0; i < 60; i++) { try { if ((await fetch(BASE + '/healthz')).ok) break; } catch {} await sleep(300); }
   const anon = await request.newContext();

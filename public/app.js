@@ -41,53 +41,101 @@
   const nowMs = () => Date.now() + S.skew;
 
   // ---------- top bar / auth ----------
+  // Default: nickname + emoji only. Email/password and Phantom are behind server flags (AUTH_EMAIL / AUTH_WALLET) and reappear when on.
+  const cfgOf = () => (S.st && S.st.config) || {};
+  const KEY = 'gtc.token';
+  const store = { get() { try { return localStorage.getItem(KEY) || ''; } catch { return ''; } }, set(v) { try { localStorage.setItem(KEY, v); } catch {} }, del() { try { localStorage.removeItem(KEY); } catch {} } };
   function renderAuth() {
-    const box = clear($('#authbox'));
+    const box = clear($('#authbox')); const cfg = cfgOf();
     if (S.me) {
-      box.append(h('a', { class: 'chip', href: '#/profile' }, h('span', { class: 'e', text: S.me.emoji }), h('span', { text: S.me.name })),
-        h('button', { class: 'btn ghost small', id: 'logoutBtn', onclick: async () => { await api('/logout', { method: 'POST' }); S.me = null; csrf = null; await refreshState(); toast('Logged out'); route(); } }, 'Log out'));
-    } else {
+      box.append(h('a', { class: 'chip', href: '#/profile' }, h('span', { class: 'e', text: S.me.emoji }), h('span', { text: S.me.name })));
+      // Legacy email accounts can't log back in while email login is off, so they only get "Switch player" when that's safe.
+      if (S.me.kind === 'nick' || cfg.authEmail) box.append(h('button', { class: 'btn ghost small', id: 'logoutBtn', onclick: switchPlayer }, S.me.kind === 'nick' ? 'Switch' : 'Log out'));
+    } else if (cfg.authNickname !== false) {
+      box.append(h('button', { class: 'btn small green', id: 'loginBtn', onclick: () => openAuth('nick') }, 'Pick a nickname'));
+      if (cfg.authEmail) box.append(h('button', { class: 'btn small', id: 'emailLoginBtn', onclick: () => openAuth('login') }, 'Log in'));
+    } else if (cfg.authEmail) {
       box.append(h('button', { class: 'btn small', id: 'loginBtn', onclick: () => openAuth('login') }, 'Log in'), h('button', { class: 'btn small green', id: 'signupBtn', onclick: () => openAuth('signup') }, 'Sign up'));
     }
+  }
+  async function switchPlayer() {
+    if (S.me.kind === 'nick' && !confirm('Switch player? Your nickname "' + S.me.name + '" stays reserved, but you will need its recovery key (Profile page) to use it again.')) return;
+    await api('/logout', { method: 'POST' }); S.me = null; csrf = null; store.del(); await refreshState(); toast('Switched'); route();
   }
   function closeModal() { $('#modal').hidden = true; clear($('#modalIn')); document.body.style.overflow = ''; }
   function openModal(node) { const m = $('#modal'), mi = clear($('#modalIn')); mi.append(h('button', { class: 'x', 'aria-label': 'Close', onclick: closeModal }, '×'), node); m.hidden = false; document.body.style.overflow = 'hidden'; }
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-  function openAuth(mode) {
-    const emojis = (S.st && S.st.config.emojis) || [];
-    let picked = '';
-    const wrap = h('div');
-    const err = h('div', { class: 'err', id: 'authErr', role: 'alert' });
-    const submitBtn = h('button', { class: 'btn', type: 'submit', id: 'authSubmit', style: 'width:100%;margin-top:10px' });
-    const form = h('form', { id: 'authForm', novalidate: true });
-    const email = h('input', { type: 'email', name: 'email', id: 'f-email', autocomplete: 'email', maxlength: '254', required: true });
-    const pass = h('input', { type: 'password', name: 'password', id: 'f-pass', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', maxlength: '72', required: true });
-    const name = h('input', { type: 'text', name: 'name', id: 'f-name', autocomplete: 'nickname', maxlength: '16', placeholder: '3–16 letters, numbers, _ . -' });
+  function emojiPicker(onPick) {
+    const emojis = cfgOf().emojis || [];
     const chosen = h('div', { class: 'chosen', id: 'chosen' }, h('span', { class: 'tiny', text: 'Pick your permanent emoji marker ↓' }));
     const grid = h('div', { class: 'egrid', id: 'egrid', role: 'radiogroup', 'aria-label': 'Emoji marker' }, emojis.map(e =>
-      h('label', { title: e }, h('input', { type: 'radio', name: 'emoji', value: e, onchange: () => { picked = e; clear(chosen).append(h('big', { text: e }), h('span', { text: 'Your marker — permanent!' })); } }), h('span', { text: e }))));
-    const tabs = h('div', { class: 'tabs' },
-      h('button', { type: 'button', class: mode === 'signup' ? 'on' : '', id: 'tab-signup', onclick: () => { closeModal(); openAuth('signup'); } }, 'Sign up'),
-      h('button', { type: 'button', class: mode === 'login' ? 'on' : '', id: 'tab-login', onclick: () => { closeModal(); openAuth('login'); } }, 'Log in'));
-    form.append(h('label', { class: 'field' }, h('span', { text: 'Email' }), email), h('label', { class: 'field' }, h('span', { text: mode === 'signup' ? 'Password (10+ characters)' : 'Password' }), pass));
-    if (mode === 'signup') form.append(h('label', { class: 'field' }, h('span', { text: 'Display name (public)' }), name), h('div', { class: 'field' }, h('span', { text: 'Choose your emoji marker' }), chosen, grid));
-    submitBtn.textContent = mode === 'signup' ? 'Create account' : 'Log in';
-    form.append(err, submitBtn);
-    form.addEventListener('submit', async ev => {
-      ev.preventDefault(); err.textContent = ''; submitBtn.disabled = true;
-      try {
-        const body = mode === 'signup' ? { email: email.value, password: pass.value, name: name.value, emoji: picked } : { email: email.value, password: pass.value };
-        if (mode === 'signup' && !picked) throw new Error('Pick an emoji from the grid.');
-        const r = await api(mode === 'signup' ? '/signup' : '/login', { method: 'POST', body });
-        S.me = r.me; csrf = null; closeModal(); toast(mode === 'signup' ? 'Welcome to the table, ' + r.me.name + ' ' + r.me.emoji : 'Welcome back ' + r.me.emoji);
-        await refreshState(); renderAuth(); route();
-      } catch (e) { err.textContent = e.message; } finally { submitBtn.disabled = false; }
-    });
-    wrap.append(h('h2', { id: 'modalTitle', text: mode === 'signup' ? 'Join the table' : 'Welcome back' }), tabs, form);
+      h('label', { title: e }, h('input', { type: 'radio', name: 'emoji', value: e, onchange: () => { onPick(e); clear(chosen).append(h('big', { text: e }), h('span', { text: 'Your marker — permanent!' })); } }), h('span', { text: e }))));
+    return h('div', { class: 'field' }, h('span', { text: 'Choose your emoji marker' }), chosen, grid);
+  }
+  function afterAuth(r, welcome) {
+    S.me = r.me; csrf = null; if (r.token) store.set(r.token);
+    closeModal(); toast(welcome);
+    return refreshState().then(() => { renderAuth(); route(); });
+  }
+
+  function openAuth(mode) {
+    const cfg = cfgOf(); let picked = '';
+    const wrap = h('div'); const err = h('div', { class: 'err', id: 'authErr', role: 'alert' });
+    const submitBtn = h('button', { class: 'btn', type: 'submit', id: 'authSubmit', style: 'width:100%;margin-top:10px' });
+    const form = h('form', { id: 'authForm', novalidate: true });
+    const tabs = h('div', { class: 'tabs' });
+    const tab = (id, m, label) => tabs.append(h('button', { type: 'button', class: mode === m ? 'on' : '', id, onclick: () => { closeModal(); openAuth(m); } }, label));
+    if (cfg.authNickname !== false) tab('tab-nick', 'nick', 'Nickname');
+    if (cfg.authEmail) { tab('tab-signup', 'signup', 'Sign up'); tab('tab-login', 'login', 'Log in'); }
+    let focusEl;
+    if (mode === 'nick') {
+      const name = h('input', { type: 'text', name: 'name', id: 'f-name', autocomplete: 'off', maxlength: '16', placeholder: '3–16 letters, numbers, _ . -', 'aria-describedby': 'authErr' });
+      focusEl = name;
+      form.append(h('label', { class: 'field' }, h('span', { text: 'Your nickname (public, unique)' }), name), emojiPicker(e => picked = e),
+        h('div', { class: 'tiny', text: 'Free to play. No email, no password, no wallet. Your nickname is saved in this browser — you get a recovery key on your Profile page.' }));
+      submitBtn.textContent = 'Let me play';
+      form.append(err, submitBtn);
+      form.addEventListener('submit', async ev => {
+        ev.preventDefault(); err.textContent = ''; submitBtn.disabled = true;
+        try {
+          if (!picked) throw new Error('Pick an emoji from the grid.');
+          const r = await api('/nick/join', { method: 'POST', body: { name: name.value.trim(), emoji: picked } });
+          await afterAuth(r, 'Welcome to the table, ' + r.me.name + ' ' + r.me.emoji);
+        } catch (e) { err.textContent = e.message; } finally { submitBtn.disabled = false; }
+      });
+      const rec = h('details', { class: 'recover' }, h('summary', { text: 'Already have a nickname? Use your recovery key' }),
+        h('input', { type: 'text', id: 'f-key', autocomplete: 'off', maxlength: '64', placeholder: 'Paste recovery key', style: 'margin-top:8px' }),
+        h('button', { type: 'button', class: 'btn ghost small', id: 'useKey', style: 'margin-top:8px', onclick: async () => {
+          err.textContent = '';
+          try { const key = $('#f-key').value.trim(); const r = await api('/nick/resume', { method: 'POST', body: { token: key } }); r.token = key; await afterAuth(r, 'Welcome back ' + r.me.emoji); } catch (e) { err.textContent = e.message; }
+        } }, 'Restore'));
+      form.append(rec);
+    } else {
+      const email = h('input', { type: 'email', name: 'email', id: 'f-email', autocomplete: 'email', maxlength: '254', required: true });
+      const pass = h('input', { type: 'password', name: 'password', id: 'f-pass', autocomplete: mode === 'signup' ? 'new-password' : 'current-password', maxlength: '72', required: true });
+      const name = h('input', { type: 'text', name: 'name', id: 'f-name', autocomplete: 'nickname', maxlength: '16', placeholder: '3–16 letters, numbers, _ . -' });
+      focusEl = email;
+      form.append(h('label', { class: 'field' }, h('span', { text: 'Email' }), email), h('label', { class: 'field' }, h('span', { text: mode === 'signup' ? 'Password (10+ characters)' : 'Password' }), pass));
+      if (mode === 'signup') form.append(h('label', { class: 'field' }, h('span', { text: 'Display name (public)' }), name), emojiPicker(e => picked = e));
+      submitBtn.textContent = mode === 'signup' ? 'Create account' : 'Log in';
+      form.append(err, submitBtn);
+      form.addEventListener('submit', async ev => {
+        ev.preventDefault(); err.textContent = ''; submitBtn.disabled = true;
+        try {
+          const body = mode === 'signup' ? { email: email.value, password: pass.value, name: name.value, emoji: picked } : { email: email.value, password: pass.value };
+          if (mode === 'signup' && !picked) throw new Error('Pick an emoji from the grid.');
+          const r = await api(mode === 'signup' ? '/signup' : '/login', { method: 'POST', body });
+          await afterAuth(r, mode === 'signup' ? 'Welcome to the table, ' + r.me.name + ' ' + r.me.emoji : 'Welcome back ' + r.me.emoji);
+        } catch (e) { err.textContent = e.message; } finally { submitBtn.disabled = false; }
+      });
+    }
+    wrap.append(h('h2', { id: 'modalTitle', text: mode === 'nick' ? 'Pick your nickname' : mode === 'signup' ? 'Join the table' : 'Welcome back' }));
+    if (tabs.children.length > 1) wrap.append(tabs);
+    wrap.append(form);
     openModal(wrap);
-    setTimeout(() => email.focus(), 30);
+    setTimeout(() => focusEl && focusEl.focus(), 30);
   }
 
   // ---------- wallet (Phantom) ----------
@@ -124,6 +172,21 @@
     return box;
   }
 
+  // recovery key box (profile)
+  function keyBox() {
+    const box = h('div', { class: 'walletbox', id: 'keyBox' });
+    const have = store.get();
+    const show = k => { clear(box).append(h('div', { class: 'tiny', text: 'RECOVERY KEY — KEEP IT SECRET' }), h('code', { id: 'keyVal', text: k }),
+      h('div', { class: 'tiny', style: 'margin-top:6px', text: 'Anyone with this key can play as you. Save it somewhere safe — it lets you restore this nickname on another device.' }),
+      h('button', { class: 'btn ghost small', style: 'margin-top:8px', id: 'copyKey', onclick: async () => { try { await navigator.clipboard.writeText(k); toast('Recovery key copied'); } catch { toast('Copy failed — select and copy it manually.', true); } } }, 'Copy')); };
+    const gen = () => h('button', { class: 'btn ghost small', id: 'genKey', onclick: async () => {
+      if (!confirm('Create a new recovery key? Any older key stops working.')) return;
+      try { const r = await api('/nick/key', { method: 'POST' }); store.set(r.token); show(r.token); } catch (e) { toast(e.message, true); } } }, have ? 'Make a new key' : 'Show my recovery key');
+    box.append(h('div', { class: 'tiny', text: 'RECOVERY KEY' }), h('div', { text: 'Your nickname is protected by a secret key stored in this browser. Reveal it to save a copy.' }),
+      h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap' }, have ? h('button', { class: 'btn ghost small', id: 'revealKey', onclick: () => show(have) }, 'Show my recovery key') : null, gen()));
+    return box;
+  }
+
   // ---------- guess panel ----------
   function renderGuess() {
     const el = clear($('#guessPanel')); const st = S.st; if (!st) return;
@@ -137,9 +200,10 @@
       el.append(h('div', { class: 'label', text: 'LOCKED IN — NO CHANGES' }), h('div', { class: 'lockedin', id: 'myGuessBig', text: money(st.myGuess.guess) }), h('div', { class: 'msg', text: 'Good luck, ' + S.me.name + ' ' + S.me.emoji + '. Watch the board 👇' })); return;
     }
     if (!S.me) {
-      el.append(h('div', { class: 'msg', text: 'Create a free account, pick your emoji, and place your bet on where SOL lands.' }), h('button', { class: 'btn big', id: 'ctaGuess', onclick: () => openAuth('signup') }, 'Place Your Guess')); return;
+      const em = cfg.authNickname === false && cfg.authEmail;
+      el.append(h('div', { class: 'msg', text: em ? 'Create a free account, pick your emoji, and place your bet on where SOL lands.' : 'Free to play — just pick a nickname and an emoji, then place your bet on where SOL lands.' }), h('button', { class: 'btn big', id: 'ctaGuess', onclick: () => openAuth(em ? 'signup' : 'nick') }, 'Place Your Guess')); return;
     }
-    if (cfg.requireHolding && !S.me.holder) {
+    if (cfg.requireHolding && cfg.authWallet && !S.me.holder) {
       el.append(h('div', { class: 'msg', text: S.me.wallet ? 'Your linked wallet has no $209madness. Hold the token to play.' : 'Hold $209madness to play. Link your Phantom wallet first.' }), walletBox(), h('button', { class: 'btn big', id: 'ctaGuess', disabled: true, style: 'margin-top:12px' }, 'Place Your Guess')); return;
     }
     const input = h('input', { type: 'text', inputmode: 'decimal', id: 'guessInput', placeholder: '0.00', maxlength: '8', autocomplete: 'off', 'aria-label': 'Your SOL price guess in USD' });
@@ -158,7 +222,8 @@
     });
     el.append(h('div', { class: 'label', text: 'WHERE DOES SOL LAND ' + fmtDT(r.settleAt).toUpperCase() + '?' }),
       h('div', { class: 'guessrow', style: 'margin:12px 0' }, h('div', { class: 'money' }, h('span', { text: '$' }), input), btn), err,
-      h('div', { class: 'tiny', text: 'One guess per week. Once placed, it can’t be changed.' }));
+      h('div', { class: 'tiny', text: 'One guess per week. Once placed, it can’t be changed.' }),
+      cfg.requireHolding ? null : h('div', { class: 'tiny', id: 'claimNote', text: 'Prize: to claim the ' + cfg.prize + ', the winner must show $209madness holdings and provide a Solana wallet address.' }));
   }
 
   // ---------- price + countdown ----------
@@ -247,7 +312,11 @@
     if (st.price.history && !S.hist.length) S.hist = st.price.history.slice();
     setPrice(st.price.usd, st.price.at);
     $('#ruleLock').textContent = fmtDT(st.round.lockAt); $('#ruleSettle').textContent = fmtDT(st.round.settleAt);
-    $('#mintLine').textContent = 'Token: $209madness · mint ' + st.config.mint + (st.config.requireHolding ? '' : ' (holding check currently off)');
+    const c = st.config;
+    $('#ruleHold').textContent = c.requireHolding ? 'You must hold $209madness in a linked Phantom wallet to play.' : 'Free to play — just a nickname and an emoji. No sign-up, no wallet needed.';
+    $('#ruleClaim').hidden = !!c.requireHolding;
+    $('#ruleClaim').textContent = 'To claim the ' + c.prize + ' prize, the winner must show $209madness holdings and provide a Solana wallet address.';
+    $('#mintLine').textContent = 'Token: $209madness · mint ' + c.mint + (c.requireHolding ? '' : ' (holdings are checked at prize claim, not at play)');
     renderAuth(); renderGuess(); renderWinner(); tickCountdown();
   }
 
@@ -262,16 +331,16 @@
   // ---------- profile / archive views ----------
   async function viewProfile() {
     const v = clear($('#view-profile'));
-    if (!S.me) { v.append(h('div', { class: 'card' }, h('h2', { text: 'Your profile' }), h('p', { text: 'Log in to see your guesses and placements.' }), h('button', { class: 'btn', onclick: () => openAuth('login') }, 'Log in'))); return; }
+    if (!S.me) { v.append(h('div', { class: 'card' }, h('h2', { text: 'Your profile' }), h('p', { text: 'Pick a nickname to see your guesses and placements.' }), h('button', { class: 'btn', id: 'profileJoin', onclick: () => openAuth(cfgOf().authNickname === false && cfgOf().authEmail ? 'login' : 'nick') }, cfgOf().authNickname === false ? 'Log in' : 'Pick a nickname'))); return; }
     let me; try { me = (await api('/me')).me; } catch { return; }
     Object.assign(S.me, { wallet: me.wallet, holder: me.holder });
-    const st = S.st;
+    const st = S.st; const cfg = st.config;
     const tbl = h('table', { class: 'hist', id: 'histTable' }, h('thead', {}, h('tr', {}, ['Round', 'Your guess', 'Final', 'Off by', 'Placed'].map(t => h('th', { text: t })))),
       h('tbody', {}, me.history.length ? me.history.map(x => h('tr', {}, h('td', { text: '#' + x.roundId }), h('td', { text: money(x.guess) }), h('td', { text: x.finalPrice ? money(x.finalPrice) : '—' }), h('td', { text: x.diff !== null ? money(x.diff) : '—' }),
         h('td', { text: x.settled ? (x.rank === 1 ? '🏆 1st' : '#' + x.rank + ' of ' + x.players) : 'Pending' }))) : [h('tr', {}, h('td', { colspan: '5', text: 'No guesses yet. Go place one!' }))]));
-    v.append(h('div', { class: 'card' }, h('div', { class: 'prof-head' }, h('div', { class: 'pe', id: 'profEmoji', text: me.emoji }), h('div', {}, h('h1', { id: 'profName', text: me.name }), h('div', { class: 'tiny', text: 'Emoji marker is permanent' }))),
+    v.append(h('div', { class: 'card' }, h('div', { class: 'prof-head' }, h('div', { class: 'pe', id: 'profEmoji', text: me.emoji }), h('div', {}, h('h1', { id: 'profName', text: me.name }), h('div', { class: 'tiny', text: me.kind === 'nick' ? 'Nickname player · emoji marker is permanent' : 'Emoji marker is permanent' }))),
       h('div', { class: 'stats' }, h('div', { class: 'stat' }, h('b', { id: 'statGuesses', text: me.totalGuesses }), h('i', { text: 'Total guesses' })), h('div', { class: 'stat' }, h('b', { text: me.wins }), h('i', { text: 'Wins' })), h('div', { class: 'stat' }, h('b', { text: me.bestRank ? '#' + me.bestRank : '—' }), h('i', { text: 'Best placement' }))),
-      walletBox()),
+      cfg.authWallet ? walletBox() : null, keyBox()),
       h('div', { class: 'card' }, h('h2', { text: 'Placement history' }), tbl));
   }
   async function viewArchive(id) {
@@ -315,6 +384,11 @@
   }
   (async () => {
     try { await refreshState(); } catch (e) { toast('Could not load. Retrying…', true); }
+    // cookie lost but the browser still holds the player's secret key: quietly resume the same nickname
+    if (!S.me && store.get() && cfgOf().authNickname !== false) {
+      try { const r = await api('/nick/resume', { method: 'POST', body: { token: store.get() } }); S.me = r.me; csrf = null; await refreshState(); }
+      catch (e) { if (e.status === 404 || e.status === 400) store.del(); }
+    }
     await Promise.all([refreshLB(), refreshRecent()]);
     renderAuth(); route(); loadChart(); connect();
     poll = setInterval(async () => { if (!es || es.readyState !== 1) { await refreshState().catch(() => {}); await refreshLB(); } }, 15000);

@@ -131,3 +131,5 @@ input,button{font-family:inherit}
 .archive-list{display:grid;gap:8px}.arow{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:12px;border-radius:14px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:#fff}
 .arow:hover{border-color:var(--gold)}.arow .big{font-family:'Anton',sans-serif;font-size:24px;color:var(--gold)}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.recover{margin-top:14px;font-size:13px;color:#bbb}.recover summary{cursor:pointer;color:var(--gold)}.recover input{width:100%}
+#keyBox code{word-break:break-all;display:block;margin:6px 0}
