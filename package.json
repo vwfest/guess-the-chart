@@ -1,0 +1,30 @@
+{
+  "name": "guess-the-chart",
+  "version": "1.0.0",
+  "description": "GUESS THE CHART \u2014 weekly SOL price guessing game for $209madness holders",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/e2e.cjs"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "compression": "^1.8.2",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.2",
+    "helmet": "^8.3.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.13",
+    "@fontsource/anton": "^5.3.0",
+    "@fontsource/rajdhani": "^5.3.0",
+    "playwright": "^1.64.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "private": true
+}

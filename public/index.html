@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GUESS THE CHART — Closest SOL price wins $25 every week</title>
+<meta name="description" content="Closest price to SOL wins $25. Every week. A $209madness holders game.">
+<meta name="theme-color" content="#050505">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🎰%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="bgfx" aria-hidden="true"></div>
+<header class="top">
+  <a class="brand" href="#/" aria-label="Guess the Chart home"><span class="brand-ic">🎰</span><span>GUESS THE <b>CHART</b></span></a>
+  <nav class="nav">
+    <a href="#/" data-route="home">Play</a>
+    <a href="#/archive" data-route="archive">Archive</a>
+    <a href="#/profile" data-route="profile">Profile</a>
+    <a href="https://vwfest.github.io/vwfest-arcade/" class="arcade-link">Arcade Room</a>
+  </nav>
+  <div id="authbox"></div>
+</header>
+
+<main>
+<!-- HOME -->
+<section id="view-home" class="view">
+  <div class="hero">
+    <div class="hero-tag"><span class="live-dot"></span> WEEK <span id="roundNo">–</span> · LIVE</div>
+    <h1 class="title"><span>GUESS THE</span> <span class="gold">CHART</span></h1>
+    <p class="sub">Closest price to SOL wins <b>$25</b>. Every week.</p>
+
+    <div class="stage">
+      <div class="card pricecard">
+        <div class="label">SOL / USD <span class="pill live">● LIVE</span></div>
+        <div class="bigprice" id="livePrice">$--.--</div>
+        <canvas id="spark" width="600" height="120" aria-label="Recent SOL price ticks"></canvas>
+        <div class="tiny" id="priceSrc"></div>
+      </div>
+      <div class="card countcard" id="countCard">
+        <div class="label" id="countLabel">LOCKS IN</div>
+        <div class="count" id="countdown" aria-live="off">
+          <div><b id="cd-d">00</b><i>DAYS</i></div><div><b id="cd-h">00</b><i>HRS</i></div><div><b id="cd-m">00</b><i>MIN</i></div><div><b id="cd-s">00</b><i>SEC</i></div>
+        </div>
+        <div class="tiny" id="countSub"></div>
+        <div class="jackpot"><span>JACKPOT</span><b>$25 SOL</b></div>
+      </div>
+    </div>
+
+    <div class="card guesscard" id="guessPanel"></div>
+  </div>
+
+  <div class="card chartcard">
+    <div class="tv" id="tv"><div class="tradingview-widget-container__widget"></div></div>
+  </div>
+
+  <div id="winnerBox"></div>
+
+  <div class="card lbcard" id="leaderboard">
+    <div class="lbhead">
+      <h2>🏆 THIS WEEK'S LEADERBOARD <span class="pill" id="lbCount">0</span></h2>
+      <div class="sortbar" id="sortbar" role="group" aria-label="Sort leaderboard">
+        <button data-sort="price" class="on">Price ↑</button><button data-sort="time">Time</button>
+      </div>
+    </div>
+    <div class="lbnote tiny" id="lbNote"></div>
+    <ol class="lb" id="lbList"></ol>
+    <div class="empty" id="lbEmpty">No guesses yet. Be the first on the board 👀</div>
+  </div>
+
+  <div class="card" id="recent">
+    <h2>👑 RECENT WINNERS</h2>
+    <div class="winners" id="recentList"></div>
+    <a class="more" href="#/archive">See full archive →</a>
+  </div>
+
+  <div class="card rules" id="rules">
+    <h2>📜 RULES</h2>
+    <ul>
+      <li>You must hold <b>$209madness</b> in a linked Phantom wallet.</li>
+      <li><b>One guess per week.</b> Once it's placed it can't be changed.</li>
+      <li>Guesses lock at <b id="ruleLock">the lock time</b>. The final SOL/USD price is taken at <b id="ruleSettle">the settle time</b>.</li>
+      <li><b>Closest price to SOL wins $25 SOL.</b> Ties go to the earlier guess.</li>
+      <li>Your emoji marker is permanent. Pick one you love.</li>
+    </ul>
+    <div class="tiny" id="mintLine"></div>
+  </div>
+</section>
+
+<!-- PROFILE -->
+<section id="view-profile" class="view" hidden></section>
+<!-- ARCHIVE -->
+<section id="view-archive" class="view" hidden></section>
+</main>
+
+<footer class="foot">
+  <div>For fun. See rules above. Not financial advice.</div>
+  <div class="tiny">Prices from public market data. <a href="https://vwfest.github.io/vwfest-arcade/">← Back to the VW Fest Arcade Room</a></div>
+</footer>
+
+<div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-in" id="modalIn"></div></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
