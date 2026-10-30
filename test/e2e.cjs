@@ -140,7 +140,7 @@ const post = (ctx, u, b) => api(ctx, 'POST', u, b);
     await api(anon, 'POST', '/api/test/advance', { ms: rnd.settleAt - st1.now + 60000 });
     await api(anon, 'POST', '/api/test/price', { price: 151.2 });
     await api(anon, 'POST', '/api/test/tick', {});
-    const lb = await (await anon.get(BASE + '/api/leaderboard')).json();
+    const lb = await (await anon.get(BASE + '/api/leaderboard?round=' + rnd.id)).json();
     ok(lb.round.phase === 'settled' && lb.round.finalPrice === 151.2, 'round settled at final price 151.20');
     // diffs: 151.25→0.05 wins; 152.00→0.8; 150→1.2; 149.75→1.45
     ok(lb.entries[0].name === 'UIGambler' && lb.entries[0].rank === 1 && Math.abs(lb.entries[0].diff - 0.05) < 1e-9, 'closest guess ranked #1 (UIGambler, ±$0.05)');
@@ -148,7 +148,6 @@ const post = (ctx, u, b) => api(ctx, 'POST', u, b);
     ok(lb.winner && lb.winner.name === 'UIGambler', 'winner recorded');
     await page.reload(); await page.waitForSelector('#winnerCard');
     ok((await page.textContent('#winnerCard')).includes('$25 SOL WINNER') && (await page.textContent('#winnerCard')).includes('UIGambler'), 'big winner display with $25 SOL WINNER badge');
-    ok((await page.textContent('#lbList .row.top1')).includes('WINNER'), '#1 row has glowing Winner badge');
     await page.waitForTimeout(500);
     await shotFull(page, 'desktop-6-winner.png');
 
@@ -163,11 +162,11 @@ const post = (ctx, u, b) => api(ctx, 'POST', u, b);
     await page.screenshot({ path: SHOTS + '/desktop-8-archive.png' });
     await page.click('#archiveList .arow'); await page.waitForSelector('#view-archive .row');
     ok(await page.locator('#view-archive .row').count() >= 8, 'archived round shows full leaderboard');
+    ok((await page.textContent('#view-archive .row.top1')).includes('WINNER'), '#1 row has glowing Winner badge');
 
     console.log('— next round + admin settle + tie-break');
-    await api(anon, 'POST', '/api/test/advance', { ms: 3 * 864e5 }); // → next week (Mon after)
     let s2 = await (await anon.get(BASE + '/api/state')).json();
-    for (let k = 0; k < 8 && s2.round.id === rnd.id; k++) { await api(anon, 'POST', '/api/test/advance', { ms: 864e5 }); s2 = await (await anon.get(BASE + '/api/state')).json(); }
+    for (let k = 0; k < 80 && s2.round.id === rnd.id; k++) { await api(anon, 'POST', '/api/test/advance', { ms: 6 * 36e5 }); s2 = await (await anon.get(BASE + '/api/state')).json(); }
     ok(s2.round.id !== rnd.id && s2.round.phase === 'open', 'new weekly round opened automatically');
     r = await post(ps[0].ctx, '/api/guess', { price: '100.00' }); ok(r.s === 200, 'players can guess again in the new round');
     await post(ps[1].ctx, '/api/guess', { price: '102.00' }); await post(ps[2].ctx, '/api/guess', { price: '98.00' });

@@ -16,8 +16,8 @@ const PROD = process.env.NODE_ENV === 'production';
 const TEST = process.env.GTC_TEST === '1';
 const int = (v, d) => (v === undefined || v === '' || !Number.isFinite(+v) ? d : +v);
 const CFG = {
-  lockDay: int(process.env.LOCK_DAY, 4), lockHour: int(process.env.LOCK_HOUR, 18), lockMin: int(process.env.LOCK_MIN, 0),         // Thu 6:00 PM PT
-  settleDay: int(process.env.SETTLE_DAY, 0), settleHour: int(process.env.SETTLE_HOUR, 18), settleMin: int(process.env.SETTLE_MIN, 0), // Sun 6:00 PM PT
+  lockDay: int(process.env.LOCK_DAY, 1), lockHour: int(process.env.LOCK_HOUR, 21), lockMin: int(process.env.LOCK_MIN, 0),         // Mon 9:00 PM PT
+  settleDay: int(process.env.SETTLE_DAY, 5), settleHour: int(process.env.SETTLE_HOUR, 10), settleMin: int(process.env.SETTLE_MIN, 0), // Fri 10:00 AM PT (next round opens right after)
   mint: process.env.TOKEN_MINT || '5671ysSG8RL8dU5pMy9KVG95GrGGFyfaLbvaVWF6pump',
   requireHolding: process.env.REQUIRE_HOLDING !== 'false',
   minHold: int(process.env.MIN_HOLD, 1),
@@ -123,19 +123,19 @@ async function ensureRound() {
   if (ex) return ex;
   let lock = w.lock, settle = w.settle;
   const first = !(await db.query(`SELECT 1 FROM ${db.S}.rounds LIMIT 1`)).rows[0];
-  if (first) { // launch round: make sure players actually get a window to guess
+  if (first) { // launch round (env overrides only apply while there are no rounds at all): make sure players actually get a window to guess
     const fl = Date.parse(process.env.FIRST_ROUND_LOCK_AT || ''), fs = Date.parse(process.env.FIRST_ROUND_SETTLE_AT || '');
     if (fl && fs && fs > fl) { lock = fl; settle = fs; }
     else if (lock < now() + 12 * 3600e3) { lock = Math.ceil((now() + 24 * 3600e3) / 36e5) * 36e5; settle = lock + 24 * 3600e3; }
   }
-  await db.query(`INSERT INTO ${db.S}.rounds (week_start,lock_at,settle_at) VALUES ($1,$2,$3) ON CONFLICT (week_start) DO NOTHING`, [new Date(w.start), new Date(lock), new Date(settle)]);
+  await db.query(`INSERT INTO ${db.S}.rounds (week_start,lock_at,settle_at,sched) VALUES ($1,$2,$3,2) ON CONFLICT (week_start) DO NOTHING`, [new Date(w.start), new Date(lock), new Date(settle)]);
   return (await db.query(`SELECT * FROM ${db.S}.rounds WHERE week_start=$1`, [new Date(w.start)])).rows[0];
 }
 const phaseOf = r => r.status === 'settled' ? 'settled' : now() < +new Date(r.lock_at) ? 'open' : now() < +new Date(r.settle_at) ? 'locked' : 'settling';
 const roundDto = r => r && ({
   id: +r.id, phase: phaseOf(r), lockAt: +new Date(r.lock_at), settleAt: +new Date(r.settle_at), weekStart: +new Date(r.week_start),
   finalPrice: r.final_price === null ? null : +r.final_price, settledLate: !!r.settled_late,
-  nextOpenAt: weekFor(+new Date(r.week_start) + 3 * 864e5, CFG).next,
+  nextOpenAt: +new Date(r.settle_at),
 });
 async function priceForSettle(round) {
   const at = +new Date(round.settle_at);
@@ -170,6 +170,18 @@ async function tick() {
       await settleRound(r.id, p.usd, { late: now() > +new Date(r.settle_at) + 120000, source: p.source });
     }
   } catch (e) { console.error('tick error', e.message); } finally { ticking = false; }
+}
+
+// One-time migration (sched 1 -> 2): the unsettled round created under the old schedule is moved onto the current
+// schedule's period (guesses kept). Settled rounds and anything already on sched 2 are never touched.
+async function migrateSchedule() {
+  const old = (await db.query(`SELECT * FROM ${db.S}.rounds WHERE sched<2 AND status<>'settled' ORDER BY id DESC LIMIT 1`)).rows[0];
+  if (!old) return;
+  const w = weekFor(now(), CFG);
+  const clash = (await db.query(`SELECT 1 FROM ${db.S}.rounds WHERE week_start=$1 AND id<>$2`, [new Date(w.start), old.id])).rows[0];
+  if (clash) { console.warn('schedule migration skipped: period already has a round'); return; }
+  await db.query(`UPDATE ${db.S}.rounds SET week_start=$2, lock_at=$3, settle_at=$4, sched=2 WHERE id=$1 AND status<>'settled'`, [old.id, new Date(w.start), new Date(w.lock), new Date(w.settle)]);
+  console.log('migrated round', +old.id, 'to new schedule: lock', new Date(w.lock).toISOString(), 'settle', new Date(w.settle).toISOString());
 }
 
 // ---------- Live events (SSE) ----------
@@ -218,10 +230,12 @@ app.get('/api/state', async (req, res) => {
   const dto = roundDto(round);
   const count = +(await db.query(`SELECT count(*) c FROM ${db.S}.guesses WHERE round_id=$1`, [round.id])).rows[0].c;
   const winner = dto.phase === 'settled' ? await winnerOf(round.id) : null;
+  const lr = (await db.query(`SELECT id, final_price, settle_at FROM ${db.S}.rounds WHERE status='settled' AND id<>$1 ORDER BY settle_at DESC LIMIT 1`, [round.id])).rows[0];
+  const lastRound = lr ? { id: +lr.id, finalPrice: +lr.final_price, settleAt: +new Date(lr.settle_at), winner: await winnerOf(lr.id) } : null;
   let myGuess = null;
   if (req.user) { const g = (await db.query(`SELECT price, created_at FROM ${db.S}.guesses WHERE round_id=$1 AND user_id=$2`, [round.id, req.user.id])).rows[0]; if (g) myGuess = { guess: +g.price, at: +new Date(g.created_at) }; }
   res.set('Cache-Control', 'no-store').json({
-    now: now(), tz: TZ, round: dto, count, winner, myGuess,
+    now: now(), tz: TZ, round: dto, count, winner, lastRound, myGuess,
     price: { usd: price.state.usd, at: price.state.at, history: price.state.history.slice(-90) },
     me: req.user ? { id: +req.user.id, name: req.user.name, emoji: req.user.emoji, wallet: req.user.wallet || null, holder: !!req.user.wallet && req.user.wallet_balance !== null && +req.user.wallet_balance >= CFG.minHold } : null,
     config: { requireHolding: CFG.requireHolding, minHold: CFG.minHold, mint: CFG.mint, prize: CFG.prize, emojis: EMOJIS },
@@ -360,6 +374,7 @@ const PORT = process.env.PORT || 3000;
 (async () => {
   if (PROD && TEST) throw new Error('GTC_TEST must not be set in production');
   await db.init();
+  await migrateSchedule();
   await ensureRound();
   if (!process.env.PRICE_FIXED) await price.seedHistory();
   await price.refresh(true);

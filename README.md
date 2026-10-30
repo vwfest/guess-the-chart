@@ -7,8 +7,8 @@ Node 20 + Express 5 + Postgres (own schema `gtc`), vanilla JS front end, Trading
 ## Rules (in-app)
 Hold $209madness in a linked Phantom wallet · one guess per week, no edits · guesses lock at the lock time · the final SOL/USD price is taken at settle time · closest wins, ties go to the earlier guess.
 
-## Schedule (America/Los_Angeles, configurable)
-Rounds run Monday 00:00 PT → next Monday. Defaults: **lock Thursday 6:00 PM PT**, **settle Sunday 6:00 PM PT** (final price = SOL/USD at that minute). A background job settles automatically; if the free host was asleep, it settles from the exact historical 1‑minute price at settle time.
+## Schedule (America/Los_Angeles, DST-aware, configurable)
+A round opens the moment the previous one settles. Defaults: **lock Monday 9:00 PM PT**, **settle Friday 10:00 AM PT** (final price = SOL/USD at that minute), and the next round opens right then. A background job settles automatically; if the free host was asleep, it settles from the exact historical 1‑minute price at settle time. Startup migration (`sched` column) moves a round created under an older schedule onto the current one, keeping its guesses; `FIRST_ROUND_*` only apply while no rounds exist.
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -19,7 +19,7 @@ Rounds run Monday 00:00 PT → next Monday. Defaults: **lock Thursday 6:00 PM PT
 | `REQUIRE_HOLDING` | `true` | `false` turns the wallet/holding check off |
 | `MIN_HOLD` | `1` | Minimum token balance (UI units) |
 | `SOLANA_RPC` | mainnet-beta public | Comma-separated RPC URLs (tried in order) |
-| `LOCK_DAY/HOUR/MIN`, `SETTLE_DAY/HOUR/MIN` | 4/18/0, 0/18/0 | Day 0=Sun…6=Sat, PT |
+| `LOCK_DAY/HOUR/MIN`, `SETTLE_DAY/HOUR/MIN` | 1/21/0, 5/10/0 | Day 0=Sun…6=Sat, PT (next round opens at the settle time) |
 | `FIRST_ROUND_LOCK_AT`, `FIRST_ROUND_SETTLE_AT` | auto | ISO times for the very first (launch) round only |
 | `PRIZE_TEXT` | `$25 SOL` | Prize label |
 | `SIGNUP_LIMIT` | 8 | Sign-ups per IP per hour |

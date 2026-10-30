@@ -214,13 +214,20 @@
         h('span', { class: 'gs' }, money(r.guess), settled ? h('small', { text: r.diff === 0 ? 'EXACT!' : '± ' + money(r.diff) + ' away' }) : null)));
     }
   }
-  function renderWinner() {
-    const box = clear($('#winnerBox')); const st = S.st; if (!st || st.round.phase !== 'settled') return;
-    if (!st.winner) { box.append(h('div', { class: 'card winnercard' }, h('h2', { text: 'Round settled' }), h('div', { text: 'Final SOL price ' + money(st.round.finalPrice) + ' · no guesses this week. The jackpot is waiting!' }))); return; }
-    const w = st.winner;
-    box.append(h('div', { class: 'card winnercard', id: 'winnerCard' }, h('div', { class: 'crown', text: '👑' }), h('div', { class: 'wemo', text: w.emoji }), h('div', { class: 'winner-name', text: w.name }),
+  function winnerCard(w, finalPrice, roundId, heading) {
+    return h('div', { class: 'card winnercard', id: 'winnerCard' }, heading ? h('div', { class: 'label', style: 'justify-content:center', text: heading }) : null, h('div', { class: 'crown', text: '👑' }), h('div', { class: 'wemo', text: w.emoji }), h('div', { class: 'winner-name', text: w.name }),
       h('div', { class: 'wbadge', text: '$25 SOL WINNER' }),
-      h('div', { class: 'wdetail' }, 'Guessed ', h('b', { text: money(w.guess) }), ' · final price ', h('b', { text: money(st.round.finalPrice) }), ' · off by ', h('b', { text: money(w.diff) }))));
+      h('div', { class: 'wdetail' }, 'Guessed ', h('b', { text: money(w.guess) }), ' · final price ', h('b', { text: money(finalPrice) }), ' · off by ', h('b', { text: money(w.diff) })),
+      roundId ? h('div', { style: 'margin-top:10px' }, h('a', { href: '#/archive/' + roundId, id: 'lastBoardLink', text: 'See that round’s full leaderboard →' })) : null);
+  }
+  function renderWinner() {
+    const box = clear($('#winnerBox')); const st = S.st; if (!st) return;
+    if (st.round.phase === 'settled') {
+      if (!st.winner) { box.append(h('div', { class: 'card winnercard' }, h('h2', { text: 'Round settled' }), h('div', { text: 'Final SOL price ' + money(st.round.finalPrice) + ' · no guesses this week. The jackpot is waiting!' }))); return; }
+      box.append(winnerCard(st.winner, st.round.finalPrice, null, null)); return;
+    }
+    const lr = st.lastRound;
+    if (lr && lr.winner) box.append(winnerCard(lr.winner, lr.finalPrice, lr.id, 'LAST ROUND’S WINNER'));
   }
   async function refreshLB() { try { S.lb = await api('/leaderboard'); renderLB(); } catch {} }
   async function refreshRecent() {
@@ -274,7 +281,7 @@
         const d = await api('/leaderboard?round=' + id); const r = d.round;
         v.append(h('a', { href: '#/archive', text: '← All rounds' }), h('div', { class: 'card' }, h('h2', { text: 'Round #' + r.id + ' · ' + fmtD(r.settleAt) }), r.finalPrice ? h('div', { text: 'Final SOL price ' + money(r.finalPrice) + (r.settledLate ? ' (settled from historical price data)' : '') }) : h('div', { text: 'Not settled yet' }),
           d.winner ? h('div', { class: 'winnercard card' }, h('div', { class: 'wemo', text: d.winner.emoji }), h('div', { class: 'winner-name', text: d.winner.name }), h('div', { class: 'wbadge', text: '$25 SOL WINNER' })) : null,
-          h('ol', { class: 'lb', style: 'margin-top:12px' }, d.entries.map(e => h('li', { class: 'row' + (e.rank === 1 ? ' top1' : '') }, h('span', { class: 'pos', text: e.rank ? '#' + e.rank : e.pos }), h('span', { class: 'emo', text: e.emoji }), h('span', { class: 'nm', text: e.name }), h('span', { class: 'gs' }, money(e.guess), e.diff !== null ? h('small', { text: '± ' + money(e.diff) }) : null))))));
+          h('ol', { class: 'lb', style: 'margin-top:12px' }, d.entries.map(e => h('li', { class: 'row' + (e.rank === 1 ? ' top1' : '') }, h('span', { class: 'pos', text: e.rank ? '#' + e.rank : e.pos }), h('span', { class: 'emo', text: e.emoji }), h('span', { class: 'nm' }, e.name, e.rank === 1 ? h('span', { class: 'badge', text: 'WINNER' }) : null), h('span', { class: 'gs' }, money(e.guess), e.diff !== null ? h('small', { text: '± ' + money(e.diff) }) : null))))));
       } catch { v.append(h('div', { class: 'card', text: 'Round not found.' })); }
       return;
     }

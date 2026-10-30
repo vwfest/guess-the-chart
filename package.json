@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/e2e.cjs"
+    "test": "node test/e2e.cjs && node test/migrate.cjs"
   },
   "type": "commonjs",
   "dependencies": {
