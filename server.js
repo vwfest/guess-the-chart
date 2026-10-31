@@ -12,6 +12,7 @@ const price = require('./lib/price');
 const sol = require('./lib/solana');
 const { weekFor, TZ } = require('./lib/time');
 const { NAME_RE, checkName } = require('./lib/names');
+const { useClientIp } = require('./lib/clientip');
 
 const PROD = process.env.NODE_ENV === 'production';
 const TEST = process.env.GTC_TEST === '1';
@@ -41,6 +42,7 @@ const now = () => Date.now() + (TEST ? clockOffset : 0);
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+useClientIp(app); // req.ip = real client (CF-Connecting-IP), not the Cloudflare edge or a spoofable X-Forwarded-For entry
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: false,
@@ -210,14 +212,17 @@ async function migrateSchedule() {
 }
 
 // ---------- Live events (SSE) ----------
-const clients = new Set();
+const clients = new Set(), sseByIp = new Map(), SSE_PER_IP = int(process.env.SSE_PER_IP, 6);
 function broadcast(type, data) { const msg = `event: ${type}\ndata: ${JSON.stringify(data || {})}\n\n`; for (const c of clients) { try { c.write(msg); } catch {} } }
 app.get('/api/events', (req, res) => {
   if (clients.size >= 800) return res.status(503).end();
+  const ipk = req.ip, nIp = sseByIp.get(ipk) || 0;
+  if (nIp >= SSE_PER_IP) return res.status(429).end(); // one address cannot hold all the live-update slots
+  sseByIp.set(ipk, nIp + 1);
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.flushHeaders(); res.write('retry: 4000\n\n');
   clients.add(res);
-  req.on('close', () => clients.delete(res));
+  req.on('close', () => { clients.delete(res); const n = (sseByIp.get(ipk) || 1) - 1; if (n <= 0) sseByIp.delete(ipk); else sseByIp.set(ipk, n); });
 });
 setInterval(() => { for (const c of clients) { try { c.write(': hb\n\n'); } catch {} } }, 25000).unref();
 
