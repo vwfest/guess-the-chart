@@ -49,12 +49,21 @@ const sse = (ip) => new Promise(res => { const rq = http.get(B + '/api/events', 
   for (const p of ['-5', '1e3', '0', '10001', 'abc', '12.345', [1], { a: 1 }, null]) { r = await e.call('POST', '/api/guess', { price: p }); ok(r.s === 400, 'bad guess rejected: ' + JSON.stringify(p)); }
   r = await e.call('POST', '/api/guess', { price: '150.25' }); ok(r.s === 200, 'valid guess accepted');
   r = await e.call('POST', '/api/guess', { price: '151' }); ok(r.s === 409, 'second guess refused (one per round)');
+  // --- logout-all revokes every session of the player (second browser) and needs auth
+  r = await client('198.51.100.43').call('POST', '/api/logout-all'); ok(r.s === 401 || r.s === 403, 'logout-all without a session refused');
+  { const f1 = client('198.51.100.44'); await f1.init(); const j = await f1.call('POST', '/api/nick/join', { name: 'TwoDevices', emoji: '🎯' }); const key = j.b.token;
+    const f2 = client('198.51.100.45'); await f2.init(); const rr = await f2.call('POST', '/api/nick/resume', { token: key });
+    ok(rr.s === 200 && (await f1.call('GET', '/api/me')).s === 200 && (await f2.call('GET', '/api/me')).s === 200, 'same player signed in on two browsers');
+    const la = await f1.call('POST', '/api/logout-all'); ok(la.s === 200 && la.b.ok, 'logout-all succeeds');
+    ok((await f1.call('GET', '/api/me')).s === 401 && (await f2.call('GET', '/api/me')).s === 401, 'both sessions are revoked');
+    ok((await f2.call('POST', '/api/nick/resume', { token: key })).s === 200, 'the recovery key still signs the player back in'); }
   // --- recovery key is not guessable / malformed rejected
   r = await e.call('POST', '/api/nick/resume', { token: "' OR 1=1 --" }); ok(r.s === 400, 'malformed recovery key -> 400');
   r = await e.call('POST', '/api/nick/resume', { token: 'A'.repeat(43) }); ok(r.s === 404, 'unknown recovery key -> 404');
   // --- headers
   const h = await fetch(B + '/'); const csp = h.headers.get('content-security-policy') || '';
   ok(!/script-src[^;]*unsafe-inline/.test(csp) && /frame-ancestors 'none'/.test(csp), 'CSP: no inline scripts, no framing');
+  ok(/camera=\(\)/.test(h.headers.get('permissions-policy') || ''), 'Permissions-Policy header present');
   ok(h.headers.get('x-content-type-options') === 'nosniff' && !h.headers.get('x-powered-by'), 'nosniff, no X-Powered-By');
   const st = await fetch(B + '/api/state'); const body = await st.text();
   ok(!/created_ip|ip_hash|secret_hash|pass_hash|"email"/i.test(body), '/api/state leaks no IP hashes, secrets or emails');

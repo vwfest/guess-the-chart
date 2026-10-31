@@ -61,6 +61,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
+app.use((req, res, next) => { res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()'); next(); });
 app.use(compression({ filter: (req, res) => req.path !== '/api/events' && compression.filter(req, res) }));
 app.use(express.json({ limit: '4kb' }));
 app.use(cookieParser());
@@ -362,6 +363,12 @@ app.post('/api/logout', async (req, res) => {
   if (typeof sid === 'string') await db.query(`DELETE FROM ${db.S}.sessions WHERE id=$1`, [hash(sid)]);
   res.clearCookie('sid', cookieOpts());
   res.json({ ok: true });
+});
+// Sign out every device/browser of the signed-in player (all of their sessions), e.g. after using a shared computer. Rotate the recovery key too if the key itself may be known.
+app.post('/api/logout-all', needAuth, userLim(60e3, 5), async (req, res) => {
+  const r = await db.query(`DELETE FROM ${db.S}.sessions WHERE user_id=$1`, [req.user.id]);
+  res.clearCookie('sid', cookieOpts());
+  res.json({ ok: true, revoked: r.rowCount ?? null });
 });
 app.get('/api/me', needAuth, async (req, res) => res.set('Cache-Control', 'no-store').json({ me: await meDto(req.user) }));
 

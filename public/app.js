@@ -183,7 +183,10 @@
       if (!confirm('Create a new recovery key? Any older key stops working.')) return;
       try { const r = await api('/nick/key', { method: 'POST' }); store.set(r.token); show(r.token); } catch (e) { toast(e.message, true); } } }, have ? 'Make a new key' : 'Show my recovery key');
     box.append(h('div', { class: 'tiny', text: 'RECOVERY KEY' }), h('div', { text: 'Your nickname is protected by a secret key stored in this browser. Reveal it to save a copy.' }),
-      h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap' }, have ? h('button', { class: 'btn ghost small', id: 'revealKey', onclick: () => show(have) }, 'Show my recovery key') : null, gen()));
+      h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap' }, have ? h('button', { class: 'btn ghost small', id: 'revealKey', onclick: () => show(have) }, 'Show my recovery key') : null, gen(),
+        h('button', { class: 'btn ghost small', id: 'logoutAll', onclick: async () => {
+          if (!confirm('Sign out of every device and browser? You can sign back in here with your recovery key. (Make a new key too if you think someone else has it.)')) return;
+          try { await api('/logout-all', { method: 'POST' }); S.me = null; csrf = null; await refreshState(); toast('Signed out everywhere'); route(); } catch (e) { toast(e.message, true); } } }, 'Sign out everywhere')));
     return box;
   }
 
