@@ -64,6 +64,7 @@ const sse = (ip) => new Promise(res => { const rq = http.get(B + '/api/events', 
   const h = await fetch(B + '/'); const csp = h.headers.get('content-security-policy') || '';
   ok(!/script-src[^;]*unsafe-inline/.test(csp) && /frame-ancestors 'none'/.test(csp), 'CSP: no inline scripts, no framing');
   ok(/camera=\(\)/.test(h.headers.get('permissions-policy') || ''), 'Permissions-Policy header present');
+  { const im = /img-src ([^;]*)/.exec(csp); ok(im && !/(^| )https:( |$)/.test(im[1]) && !/\*( |$)/.test(im[1]), 'CSP img-src has no blanket https: or *'); }
   ok(h.headers.get('x-content-type-options') === 'nosniff' && !h.headers.get('x-powered-by'), 'nosniff, no X-Powered-By');
   const st = await fetch(B + '/api/state'); const body = await st.text();
   ok(!/created_ip|ip_hash|secret_hash|pass_hash|"email"/i.test(body), '/api/state leaks no IP hashes, secrets or emails');

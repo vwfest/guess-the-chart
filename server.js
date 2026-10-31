@@ -50,7 +50,7 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", 'https://s3.tradingview.com'],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:', 'https:'],
+      imgSrc: ["'self'", 'data:', 'https://s3.tradingview.com', 'https://*.tradingview.com', 'https://*.tradingview-widget.com'],   // only the chart widget's hosts, no blanket https:
       fontSrc: ["'self'", 'data:'],
       connectSrc: ["'self'", 'https://*.tradingview.com', 'https://*.tradingview-widget.com', 'wss://*.tradingview.com'],
       frameSrc: ['https://*.tradingview.com', 'https://*.tradingview-widget.com'],

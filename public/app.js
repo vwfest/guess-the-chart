@@ -29,7 +29,8 @@
       o.headers['content-type'] = 'application/json'; o.headers['x-csrf-token'] = csrf;
       o.body = JSON.stringify(opts.body || {});
     }
-    const r = await fetch('/api' + path, o);
+    const slow = setTimeout(() => toast('Waking up the free server… this can take about 20 seconds.'), 3500);
+    let r; try { r = await fetch('/api' + path, o); } finally { clearTimeout(slow); }
     let j = {}; try { j = await r.json(); } catch {}
     if (r.status === 403 && /token/i.test(j.error || '')) csrf = null;
     if (!r.ok) { const e = new Error(j.error || 'Request failed'); e.status = r.status; e.data = j; throw e; }
